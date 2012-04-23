@@ -1,0 +1,115 @@
+#!/usr/bin/env ruby
+#encoding: utf-8
+
+base = File.dirname(File.absolute_path(__FILE__))
+require "#{base}/common.rb"
+
+begin
+  cache = File.open('.cache', 'r+')
+rescue
+  cache = File.open('.cache', 'w+')
+end
+  
+contents = cache.read
+if contents==''
+  estados = JSON.parse Iconv.iconv('utf-8', 'iso8859-1', SCT.get('/SerEscogeRuta?estados').body).join
+  data = {
+    estados: {},
+    puntos: {}
+  }
+  
+  estados.each {|edo|
+    nombre = edo['nombre']
+    $stdout.write "Jugando con #{nombre}..."
+    data[:estados][edo['id']] = nombre
+    puntos = JSON.parse Iconv.iconv('utf-8', 'iso8859-1', SCT.get("/SerEscogeRuta?idEstado=#{edo['id']}")).join, :symbolize_names => true
+    
+    puntos.each {|punto|
+      data[:puntos][punto[:id]] = {
+        estado: punto[:idEdo],
+        coords: [punto[:coordenadaX], punto[:coordenadaY]],
+        nombre: punto[:nombre]
+      }
+    }
+    $stdout.write " DONE!\n"
+  }
+  
+  cache << data.to_json
+else
+  data = JSON.parse contents, :symbolize_names => true
+end
+
+puts data.to_json
+
+#lo que sigue son puras mamadas para averiguar la relación entre el mapa de SCT y un mapa de proyección mercator, como la de Google Maps
+#todavía no tengo puta idea cómo va a jalar...
+=begin
+
+Zócalo
+Google Maps dice: y:19.432641,x:-99.133372
+SCT dice: y:206.543, x:-43.86,
+SCT para mapa dice: y:318.90533, x:275.07587
+
+###
+# Para Coords
+###
+
+
+
+
+###
+# Para Mapa
+###
+Su plano cartesiano va de LT: 0,0
+a BR: 550,400
+
+y: 318.90533 -> 19.432641
+x: 275.0758  -> -99.133372
+
+318.90533-25.576385 = 293.328945
+275.0758-11.270352=263.805448
+
+19.432641-32.533373 = 13.100731999999997
+-99.133372+117.0189 = 17.885528000000008
+
+293.328945/13.100732 = 22.390271398575283
+263.805448/17.885528 = 14.749659501245924
+
+1/22.390271398575283 0.04466225452111452
+1/14.749659501245924 0.06779817526740388
+
+
+550/22.390271398575283 = 24.564239986612986+19.432641  43.996880986612986
+400/14.749659501245924 = -99.133372-27.11927010696155 -126.25264210696155
+
+43.996880986612986, -126.25264210696155
+
+y0 = 33.5144995851904 (550 * 19.432641 / 318.90533)
+x0 = -144.15426147992662 (400 * -99.133372 / 275.0758)
+33.5144995851904, -144.15426147992662
+
+318 = ?
+550  = 33.5144995851904
+
+1/
+
+#cuernavaca df
+df 318.90533#275.07587
+cuerna 316.96512#284.0324
+
+318.90533-316.96512 = 1.9402099999999791
+275.07587-284.0324 = -8.956529999999987
+1.9402099999999791*0.04466225452111452 19.432641-0.08665415284441066 19.34598684715559
+-8.956529999999987*0.06779817526740388 -99.13337-0.6072363907277599 -99.74060639072776
+
+19.51929515284441, -99.74060839072776
+
+Cd. De México (Zócalo)#318.90533#275.07587#Monumento a Cuauhtémoc#318.35947#275.15588#PG#PP#1&
+Monumento a Cuauhtémoc#318.35947#275.15588#Entronque Av. Insurgentes#318.23096#275.66415#PP#E#6&
+T Av. Insurgentes#318.23096#275.66415#Glorieta Manacar#318.11765#276.3586#E#PP#12&
+Glorieta Manacar#318.11765#276.3586#Pirámide Cuicuilco (Perisur)#318.27032#277.9469#PP#PP#6&
+Pirámide Cuicuilco (Perisur)#318.27032#277.9469#Monumento al Caminero#318.46033#278.44345#PP#PP#6&
+Monumento al Caminero#318.46033#278.44345#Tlalpan#318.60132#279.0324#PP#C#6&
+Tlalpan#318.60132#279.0324#Entronque Cuernavaca#317.265#283.31448#C#E#4&
+Entronque Cuernavaca#317.265#283.31448#Cuernavaca#316.96512#284.0324#E#PG#1
+=end

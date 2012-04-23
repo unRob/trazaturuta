@@ -1,0 +1,19 @@
+#!/usr/bin/env ruby
+#encoding: utf-8
+require 'mongo'
+require 'json'
+require 'pp'
+
+###############
+#     WIP     #
+###############
+
+base = File.dirname(File.absolute_path(__FILE__))
+content = Iconv.iconv('utf-8', 'iso8859-1', File.open("#{base}/.cache", 'r').read).join ''
+data = JSON.parse(content)
+
+data['puntos'].each {|id, punto|
+  if (punto['nombre'].match(/canc[úu]n/i) || punto['nombre'].match(/zócalo/i) || punto['nombre'].match(/tijuana/i))
+    pp punto
+  end
+}

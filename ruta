@@ -1,0 +1,208 @@
+#!/usr/bin/env ruby
+#encoding: utf-8
+
+begin
+  base = File.dirname(File.absolute_path(__FILE__))
+  require "#{base}/common.rb"
+  require 'nokogiri'
+rescue
+  puts 'Seguro falta algún gem: nogokiri, httparty ó algo por el estilo'
+end
+
+if ARGV.count != 2
+  $stdout.write <<-USAGE
+Usage: ruta id_inicio id_fin
+
+    Requiero dos argumentos, el id de origen y el id de destino,
+    por ejemplo \"901\" y \"17050\", que es de Zócalo DF a Cuernavaca
+    Los ids salen de ./cache por ahora, idealmente estaríangeoreferenciados...
+    ¿supongo?
+   
+Regresa: JSON
+ {
+   tramos: los tramos que marca SCT en su modalidad
+          'simplificada', con los tiempos, distancias
+          y costos asociados;
+   puntos: Los puntos entre las dos ids, del cual chance
+           y pueque pueda sacar lat/lon de mercator,
+   totales: {
+     distancia: La distancia total a recorrer,
+     tiempo: El tiempo total del recorrido,
+     costo: El costo de casetas, de haber
+   }
+ 
+Cada tramo consta de:
+ {
+   tramo: el nombre del tramo,
+   estado: la abreviación del estado,
+   carretera: [opcional] Si es una carretera,
+   distancia: La distancia del inicio al final del tramo,
+   tiempo: El tiempo de recorrido del tramo,
+   caseta: [opcional] el nombre de la caseta,
+   costo: [opcional] El costo de la caseta
+ }
+ 
+ 
+Cada punto consta de:
+  {
+    inicio: {
+      nombre: El nombre del punto,
+      lat: la latitud en el mapa de SCT del punto,
+      lon: la longitud en el mapa de SCT del punto,
+      tipo: el tipo de inicio del punto
+    },
+    fin: {
+      nombre: idem,
+      lat: idem,
+      lon: idem,
+      tipo: idem
+    },
+    tipo: el tipo del tramo
+  }
+  
+Cabe mencionar que las coordenadas de los puntos aquí, no corresponden a aquellas
+de los puntos de "./cache" porque a SCT seguro no se le prendió el foco que usar
+coordenadas de una proyección estandar para toda su aplicación sería lo más
+conveniente...
+    
+USAGE
+  exit 1
+end
+
+#si digo true, uso un archivo de cache para no pedirle nada a SCT y tenga que hacerme viejo en lo que su server pitero contesta
+dev = false
+from, to = ARGV
+cache = File.open("#{base}/.cache", 'r')
+
+begin
+  data = JSON.parse cache.read, :symbolize_names => true
+rescue Exception => e
+  puts "No pude leer el cache, tal vez hay que correr primero ./cache?"
+  exit 1
+end
+
+from = from.ljust(4, "0")
+to = to.ljust(4, "0")
+
+begin
+  estadoOrigen = data[:puntos][:"#{from}"][:estado]
+  estadoDestino = data[:puntos][:"#{to}"][:estado]
+rescue Exception => e
+  puts 'Alguno de los puntos que me diste no existen, chécalos!'
+  exit 1
+end
+
+query = {
+  action: 'cmdSolRutasApple',
+  tipo: 1,
+  red: 'simplificada',
+  edoOrigen: estadoOrigen,
+  ciudadOrigen: from,
+  edoDestino: estadoDestino,
+  ciudadDestino: to,
+  vehiculos: 2 #de automóvil
+}
+
+begin
+  if !dev
+    metodoInventadoParaCacharLaExcepcionPorqueSoyUnHuevon
+  end
+  html = File.open("#{base}/.htmlCache", 'r')
+  respuesta = Iconv.iconv('utf-8', 'iso8859-1', html.read).join ''
+  #respuesta = respuesta.read
+rescue
+  respuesta = SCT.get('/ControllerUI', :query => query).body
+  html = File.open("#{base}/.htmlCache", 'w+')
+  html << respuesta
+end
+html = Nokogiri::HTML(respuesta)
+
+
+tramos = []
+puntos = []
+
+
+puntosARecorrer = html.css('input[name=destino]')[0].attr('value').split('&')
+puntosARecorrer.each {|punto|
+  inicio, inicio_x, inicio_y, fin, fin_x, fin_y, inicio_tipo, fin_tipo, tipo_punto = punto.split('#')
+  puntos.push({
+    inicio: {
+      nombre: inicio,
+      lat: inicio_x, #SCT.toLat(inicio_x),
+      lon: inicio_y, #SCT.toLon(inicio_y),
+      tipo: inicio_tipo
+    },
+    fin: {
+      nombre: fin,
+      lat: fin_x, #SCT.toLat(fin_x),
+      lon: fin_y, #SCT.toLon(fin_y),
+      tipo: fin_tipo
+    },
+    tipo: tipo_punto
+  })
+}
+
+
+trs = html.css('#tContenido tr')
+
+
+indexes = [
+  'tramo',
+  'estado',
+  'carretera',
+  'distancia',
+  'tiempo',
+  'caseta',
+  'costo'
+]
+
+distancia = 0.0;
+tiempo = 0;
+costo = 0.0
+
+trs[2..trs.count-3].each {|node|
+  tramo = {}
+  #porque para SCT, es importante tener <tr> vacíos
+  next unless node.content.strip != ''
+  
+  node.css('td').each_with_index {|row, index|
+    #El nuevo padding es &nbsp; ¬¬
+    value = row.text.gsub(/\302\240/, ' ').strip
+    
+    next unless value != ''    
+    
+    case index
+    when 2
+      # Quitamos "carreteras" que sean Zona Urbana
+      next unless value != 'Zona Urbana'
+    when 3
+      #sumamos distancia
+      value.to_f
+      distancia += value
+    when 4
+      #Hacemos las horas cantidad de minutos
+      horas, minutos = value.split(':')
+      value = ((horas*60) + minutos).to_i
+      tiempo += value
+    when 6
+      #sumamos costo
+      value = value.to_f
+      costo += value
+    end
+ 
+    tramo[indexes[index]] = value
+  }
+  tramos.push(tramo)
+}
+
+respuesta = {
+  tramos: tramos,
+  puntos: puntos,
+  totales: {
+    distancia: distancia,
+    tiempo: tiempo,
+    costo: costo
+  }
+}
+
+puts respuesta.to_json
